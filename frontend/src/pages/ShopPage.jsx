@@ -18,6 +18,7 @@ export default function ShopPage() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loadError, setLoadError] = useState(null)
+  const [hasActiveOrder, setHasActiveOrder] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -28,6 +29,7 @@ export default function ShopPage() {
       const [available, orders] = await Promise.all([availableProducts(), myOrders()])
       setData(available)
       const current = (orders || []).find(o => o.status === 'ACTIVE' && o.roundId === available?.round?.id)
+      setHasActiveOrder(Boolean(current))
       setQuantities(current
         ? Object.fromEntries(current.lines.map(l => [l.productId, Number(l.quantity)]))
         : {})
@@ -83,10 +85,14 @@ export default function ShopPage() {
       okText: 'Cancel order',
       okButtonProps: { danger: true },
       onOk: async () => {
-        await cancelOrder()
-        message.success('Order cancelled')
-        setQuantities({})
-        load()
+        try {
+          await cancelOrder()
+          message.success('Order cancelled')
+          setQuantities({})
+          load()
+        } catch (error) {
+          message.error(error.message)
+        }
       }
     })
   }
@@ -159,7 +165,7 @@ export default function ShopPage() {
           title="Your order"
           extra={(
             <Space>
-              <Button danger onClick={cancel}>Cancel order</Button>
+              <Button danger disabled={!hasActiveOrder} onClick={cancel}>Cancel order</Button>
               <Button type="primary" loading={saving} onClick={save}>Save order</Button>
             </Space>
           )}

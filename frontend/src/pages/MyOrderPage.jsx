@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Typography, message } from 'antd'
+import { App, Card, Table, Tag, Typography } from 'antd'
 import { myOrders } from '../api/order'
 
 const unitTypeLabels = { PER_UNIT: 'each', PER_KG: 'per kg' }
 
 export default function MyOrderPage() {
+  const { message } = App.useApp()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(false)
 

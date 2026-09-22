@@ -4931,7 +4931,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
             .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
-            .andExpect(jsonPath("$.data[0].status").value("CANCELLED"));
+            .andExpect(jsonPath("$.data[0].status").value("CANCELLED"))
+            .andExpect(jsonPath("$.data[0].lines.length()").value(2))
+            .andExpect(jsonPath("$.data[0].total").value(20.10));
     }
 
     @Test
@@ -5000,6 +5002,48 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
             .andExpect(jsonPath("$.data[0].status").value("ACTIVE"))
             .andExpect(jsonPath("$.data[0].total").value(7.50));
     }
+
+    @Test
+    void cancellingTwiceReturnsNotFound() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    void cancelOnlyAffectsTheCurrentRound() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        com.greenhill.coop.entity.Round first = roundMapper.selectById(roundId);
+        first.setStatus(RoundStatus.CLOSED);
+        roundMapper.updateById(first);
+        createRound(35, RoundStatus.OPEN);
+
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].roundNo").value(35))
+            .andExpect(jsonPath("$.data[0].status").value("CANCELLED"))
+            .andExpect(jsonPath("$.data[1].roundNo").value(34))
+            .andExpect(jsonPath("$.data[1].status").value("ACTIVE"));
+    }
 ```
 
 - [ ] **Step 3: 运行确认失败**
@@ -5008,7 +5052,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 ./mvnw test -Dtest=OrderApiTest
 ```
 
-Expected: 新增的 5 个测试失败(DELETE 接口不存在)。
+Expected: 新增的 7 个测试失败(DELETE 接口不存在)。
 
 - [ ] **Step 4: 在 `OrderService` 中加取消逻辑**
 
@@ -5033,7 +5077,9 @@ Expected: 新增的 5 个测试失败(DELETE 接口不存在)。
 - [ ] **Step 5: 在 `OrderController` 中加 `DELETE /mine`**
 
 ```java
-    @org.springframework.web.bind.annotation.DeleteMapping("/mine")
+import org.springframework.web.bind.annotation.DeleteMapping;
+
+    @DeleteMapping("/mine")
     public Result<Void> cancelMine(@CurrentUser MemberContext context) {
         orderService.cancelMyOrder(context.id());
         return Result.success(null);
@@ -5046,7 +5092,7 @@ Expected: 新增的 5 个测试失败(DELETE 接口不存在)。
 ./mvnw test -Dtest=OrderApiTest,PricingServiceTest
 ```
 
-Expected: `OrderApiTest` 15 个 + `PricingServiceTest` 12 个全部通过。
+Expected: `OrderApiTest` 17 个 + `PricingServiceTest` 12 个全部通过。
 
 - [ ] **Step 7: 提交后端**
 
@@ -5060,12 +5106,13 @@ git add -A && git commit -m "feat(story-08): cancel order and read-only behaviou
 
 ```jsx
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Typography, message } from 'antd'
+import { App, Card, Table, Tag, Typography } from 'antd'
 import { myOrders } from '../api/order'
 
 const unitTypeLabels = { PER_UNIT: 'each', PER_KG: 'per kg' }
 
 export default function MyOrderPage() {
+  const { message } = App.useApp()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(false)
 
@@ -5123,25 +5170,34 @@ export default function MyOrderPage() {
 ```jsx
           extra={(
             <Space>
-              <Button danger onClick={cancel}>Cancel order</Button>
+              <Button danger disabled={!hasActiveOrder} onClick={cancel}>Cancel order</Button>
               <Button type="primary" loading={saving} onClick={save}>Save order</Button>
             </Space>
           )}
 ```
 
-并在组件内加入取消函数(需要 import `Modal` 与 `cancelOrder`):
+并在组件内加入 `hasActiveOrder` 状态、取消函数(需要 `App.useApp()` 的 `modal` 与 `cancelOrder`):
 
 ```jsx
+  const [hasActiveOrder, setHasActiveOrder] = useState(false)
+
+  // load() 中算出 current 之后:
+  setHasActiveOrder(Boolean(current))
+
   function cancel() {
     modal.confirm({
       title: 'Cancel your order for this round?',
       okText: 'Cancel order',
       okButtonProps: { danger: true },
       onOk: async () => {
-        await cancelOrder()
-        message.success('Order cancelled')
-        setQuantities({})
-        load()
+        try {
+          await cancelOrder()
+          message.success('Order cancelled')
+          setQuantities({})
+          load()
+        } catch (error) {
+          message.error(error.message)
+        }
       }
     })
   }

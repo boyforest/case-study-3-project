@@ -174,7 +174,9 @@ class OrderApiTest extends ApiTestBase {
             .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
-            .andExpect(jsonPath("$.data[0].status").value("CANCELLED"));
+            .andExpect(jsonPath("$.data[0].status").value("CANCELLED"))
+            .andExpect(jsonPath("$.data[0].lines.length()").value(2))
+            .andExpect(jsonPath("$.data[0].total").value(20.10));
     }
 
     @Test
@@ -242,5 +244,47 @@ class OrderApiTest extends ApiTestBase {
         mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + otherToken))
             .andExpect(jsonPath("$.data[0].status").value("ACTIVE"))
             .andExpect(jsonPath("$.data[0].total").value(7.50));
+    }
+
+    @Test
+    void cancellingTwiceReturnsNotFound() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    void cancelOnlyAffectsTheCurrentRound() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        com.greenhill.coop.entity.Round first = roundMapper.selectById(roundId);
+        first.setStatus(RoundStatus.CLOSED);
+        roundMapper.updateById(first);
+        createRound(35, RoundStatus.OPEN);
+
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(jsonPath("$.data.length()").value(2))
+            .andExpect(jsonPath("$.data[0].roundNo").value(35))
+            .andExpect(jsonPath("$.data[0].status").value("CANCELLED"))
+            .andExpect(jsonPath("$.data[1].roundNo").value(34))
+            .andExpect(jsonPath("$.data[1].status").value("ACTIVE"));
     }
 }
