@@ -41,13 +41,12 @@ public class JwtInterceptor implements HandlerInterceptor {
         if (member.getStatus() != MemberStatus.ACTIVE) {
             throw BizException.unauthorized("Account is inactive");
         }
-        UserContext.set(new MemberContext(member.getId(), member.getMemberNo(), member.getName(), member.getRole()));
-
         boolean needsCoordinator = handlerMethod.hasMethodAnnotation(RequireCoordinator.class)
             || handlerMethod.getBeanType().isAnnotationPresent(RequireCoordinator.class);
         if (needsCoordinator && member.getRole() != MemberRole.COORDINATOR) {
             throw BizException.forbidden("Coordinator permission required");
         }
+        UserContext.set(new MemberContext(member.getId(), member.getMemberNo(), member.getName(), member.getRole()));
         return true;
     }
 

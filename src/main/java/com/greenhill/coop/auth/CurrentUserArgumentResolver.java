@@ -1,5 +1,6 @@
 package com.greenhill.coop.auth;
 
+import com.greenhill.coop.common.BizException;
 import org.springframework.core.MethodParameter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.support.WebDataBinderFactory;
@@ -19,6 +20,10 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
     @Override
     public Object resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
                                   NativeWebRequest webRequest, WebDataBinderFactory binderFactory) {
-        return UserContext.get();
+        MemberContext context = UserContext.get();
+        if (context == null) {
+            throw BizException.unauthorized("Not logged in");
+        }
+        return context;
     }
 }

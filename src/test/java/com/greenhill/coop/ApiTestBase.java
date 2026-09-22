@@ -1,5 +1,6 @@
 package com.greenhill.coop;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.greenhill.coop.common.enums.MemberRole;
 import com.greenhill.coop.common.enums.MemberStatus;
@@ -83,7 +84,12 @@ public abstract class ApiTestBase {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("memberNo", memberNo, "password", password))))
             .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString())
-            .path("data").path("token").asText();
+        String responseBody = result.getResponse().getContentAsString();
+        JsonNode root = objectMapper.readTree(responseBody);
+        String token = root.path("data").path("token").asText();
+        if (root.path("code").asInt() != 200 || token.isBlank()) {
+            throw new IllegalStateException("Login failed for " + memberNo + ": " + responseBody);
+        }
+        return token;
     }
 }

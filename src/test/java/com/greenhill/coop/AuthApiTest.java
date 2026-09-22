@@ -66,4 +66,14 @@ class AuthApiTest extends ApiTestBase {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.memberNo").value("M-094"));
     }
+
+    @Test
+    void coordinatorEndpointRejectsMembersAndClearsContext() throws Exception {
+        mockMvc.perform(get("/api/test/coordinator-only")
+                .header("Authorization", "Bearer " + tokenFor("M-094", "coop1234")))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value(403));
+
+        org.assertj.core.api.Assertions.assertThat(com.greenhill.coop.auth.UserContext.get()).isNull();
+    }
 }
