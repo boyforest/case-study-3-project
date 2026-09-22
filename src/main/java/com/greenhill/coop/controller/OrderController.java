@@ -33,4 +33,10 @@ public class OrderController {
                                        @Valid @RequestBody PlaceOrderRequest request) {
         return Result.success(orderService.placeMyOrder(context.id(), request));
     }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/mine")
+    public Result<Void> cancelMine(@CurrentUser MemberContext context) {
+        orderService.cancelMyOrder(context.id());
+        return Result.success(null);
+    }
 }

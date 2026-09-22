@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -160,5 +161,86 @@ class OrderApiTest extends ApiTestBase {
         mockMvc.perform(get("/api/orders/mine")
                 .header("Authorization", "Bearer " + tokenFor("M-041", "coop1234")))
             .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    void memberCanCancelOrderWhileRoundIsOpen() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(jsonPath("$.data[0].status").value("CANCELLED"));
+    }
+
+    @Test
+    void memberCanPlaceANewOrderAfterCancelling() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken));
+
+        mockMvc.perform(put("/api/orders/mine")
+                .header("Authorization", "Bearer " + memberToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"lines\":[{\"productId\":%d,\"quantity\":2}]}".formatted(eggsId)))
+            .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+            .andExpect(jsonPath("$.data.total").value(15.00));
+    }
+
+    @Test
+    void cancelWithoutOrderIsRejected() throws Exception {
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    void closedRoundBlocksChangesButNotReading() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        com.greenhill.coop.entity.Round round = roundMapper.selectById(roundId);
+        round.setStatus(RoundStatus.CLOSED);
+        roundMapper.updateById(round);
+
+        mockMvc.perform(put("/api/orders/mine")
+                .header("Authorization", "Bearer " + memberToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(linesJson()))
+            .andExpect(jsonPath("$.code").value(409));
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(jsonPath("$.code").value(409));
+
+        mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + memberToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].total").value(20.10));
+    }
+
+    @Test
+    void changingOrderDoesNotAffectOtherMembers() throws Exception {
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + memberToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(linesJson()));
+
+        String otherToken = tokenFor("M-041", "coop1234");
+        mockMvc.perform(put("/api/orders/mine")
+            .header("Authorization", "Bearer " + otherToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"lines\":[{\"productId\":%d,\"quantity\":1}]}".formatted(eggsId)));
+
+        mockMvc.perform(delete("/api/orders/mine").header("Authorization", "Bearer " + memberToken));
+
+        mockMvc.perform(get("/api/orders/mine").header("Authorization", "Bearer " + otherToken))
+            .andExpect(jsonPath("$.data[0].status").value("ACTIVE"))
+            .andExpect(jsonPath("$.data[0].total").value(7.50));
     }
 }
