@@ -502,6 +502,7 @@ public class PageResult<T> {
 package com.greenhill.coop.common;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -549,6 +550,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(Result.error(BizCode.METHOD_NOT_ALLOWED.getCode(), "Method not allowed"));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public Result<Void> handleIntegrity(DataIntegrityViolationException e) {
+        log.warn("Data integrity violation", e);
+        return Result.error(BizCode.CONFLICT.getCode(), "This change conflicts with existing data");
     }
 
     @ExceptionHandler(Exception.class)
@@ -619,7 +626,9 @@ public class MybatisPlusConfig {
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
-        interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.H2));
+        PaginationInnerInterceptor pagination = new PaginationInnerInterceptor(DbType.H2);
+        pagination.setMaxLimit(500L);
+        interceptor.addInnerInterceptor(pagination);
         return interceptor;
     }
 }
@@ -2165,6 +2174,55 @@ class MemberApiTest extends ApiTestBase {
             .andExpect(jsonPath("$.data.total").value(1))
             .andExpect(jsonPath("$.data.records[0].memberNo").value("M-094"));
     }
+
+    @Test
+    void keywordAndStatusFilterCombine() throws Exception {
+        createMember("M-050", "Jan Active", MemberRole.MEMBER, "coop1234");
+        Member inactive = createMember("M-051", "Jan Inactive", MemberRole.MEMBER, "coop1234");
+        inactive.setStatus(MemberStatus.INACTIVE);
+        memberMapper.updateById(inactive);
+
+        mockMvc.perform(get("/api/members?keyword=Jan&status=ACTIVE")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.total").value(1))
+            .andExpect(jsonPath("$.data.records[0].memberNo").value("M-050"));
+    }
+
+    @Test
+    void updateMissingMemberReturns404() throws Exception {
+        mockMvc.perform(put("/api/members/999999")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"Nobody\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    void resetPasswordTooShortIsRejected() throws Exception {
+        Member ky = memberMapper.selectOne(
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Member>()
+                .eq(Member::getMemberNo, "M-094"));
+        mockMvc.perform(post("/api/members/" + ky.getId() + "/reset-password")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"password\":\"123\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    void overLengthMemberNumberIsRejected() throws Exception {
+        mockMvc.perform(post("/api/members")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"memberNo":"M-123456789","name":"Too Long","password":"coop1234"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(400));
+    }
 }
 ```
 
@@ -2184,9 +2242,12 @@ package com.greenhill.coop.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-public record MemberCreateRequest(@NotBlank String memberNo, @NotBlank String name, String phone,
-                                  String email, String address,
-                                  @NotBlank @Size(min = 6, message = "password must be at least 6 characters") String password) {
+public record MemberCreateRequest(@NotBlank @Size(max = 10) String memberNo,
+                                  @NotBlank @Size(max = 100) String name,
+                                  @Size(max = 20) String phone,
+                                  @Size(max = 100) String email,
+                                  @Size(max = 200) String address,
+                                  @NotBlank @Size(min = 6, max = 100, message = "password must be between 6 and 100 characters") String password) {
 }
 ```
 
@@ -2194,8 +2255,12 @@ public record MemberCreateRequest(@NotBlank String memberNo, @NotBlank String na
 package com.greenhill.coop.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
-public record MemberUpdateRequest(@NotBlank String name, String phone, String email, String address) {
+public record MemberUpdateRequest(@NotBlank @Size(max = 100) String name,
+                                  @Size(max = 20) String phone,
+                                  @Size(max = 100) String email,
+                                  @Size(max = 200) String address) {
 }
 ```
 
@@ -2206,7 +2271,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 public record ResetPasswordRequest(
-    @NotBlank @Size(min = 6, message = "password must be at least 6 characters") String password) {
+    @NotBlank @Size(min = 6, max = 100, message = "password must be between 6 and 100 characters") String password) {
 }
 ```
 
@@ -2398,7 +2463,7 @@ public class MemberController {
 ./mvnw test -Dtest=MemberApiTest
 ```
 
-Expected: 8 个测试全部通过。
+Expected: 12 个测试全部通过。
 
 - [ ] **Step 8: 提交后端**
 
@@ -2474,9 +2539,9 @@ export default function CrudTable({
   }
 
   async function save() {
-    const values = fromFormValues(await editForm.validateFields(), formFields)
     setSaving(true)
     try {
+      const values = fromFormValues(await editForm.validateFields(), formFields)
       if (editing?.[rowKey]) {
         await updateApi(editing[rowKey], clean(values))
         message.success('Updated')
@@ -2487,7 +2552,7 @@ export default function CrudTable({
       setEditing(null)
       reload()
     } catch (error) {
-      message.error(error.message)
+      if (error?.message) message.error(error.message)
     } finally {
       setSaving(false)
     }
@@ -2497,7 +2562,15 @@ export default function CrudTable({
     modal.confirm({
       title: `Delete ${record[rowKey]}?`,
       okText: 'Delete', okButtonProps: { danger: true }, cancelText: 'Cancel',
-      onOk: async () => { await deleteApi(record[rowKey]); message.success('Deleted'); reload() }
+      onOk: async () => {
+        try {
+          await deleteApi(record[rowKey])
+          message.success('Deleted')
+          reload()
+        } catch (error) {
+          message.error(error.message)
+        }
+      }
     })
   }
 
@@ -2560,7 +2633,7 @@ function FieldControl({ field, filter }) {
   if (field.type === 'number') {
     return <InputNumber min={0} precision={field.precision} placeholder={field.placeholder} style={{ minWidth: 160 }} />
   }
-  return <Input placeholder={field.placeholder} style={{ minWidth: 180 }} />
+  return <Input maxLength={field.maxLength} placeholder={field.placeholder} style={{ minWidth: 180 }} />
 }
 
 function clean(object) {
@@ -2623,6 +2696,7 @@ import { useState } from 'react'
 import { App, Button, Form, Input, Modal, Space, Tag } from 'antd'
 import CrudTable from '../../components/CrudTable'
 import { activateMember, createMember, deactivateMember, listMembers, resetMemberPassword, updateMember } from '../../api/member'
+import { getUser } from '../../utils/auth'
 
 const filters = [
   { name: 'keyword', label: 'Keyword', placeholder: 'Name or member no.' },
@@ -2645,12 +2719,12 @@ const columns = [
 ]
 
 const formFields = [
-  { name: 'memberNo', label: 'Member number', createOnly: true, rules: [{ required: true }] },
-  { name: 'name', label: 'Name', rules: [{ required: true }] },
-  { name: 'phone', label: 'Phone' },
-  { name: 'email', label: 'Email' },
-  { name: 'address', label: 'Address' },
-  { name: 'password', label: 'Initial password', createOnly: true, rules: [{ required: true }, { min: 6 }] }
+  { name: 'memberNo', label: 'Member number', createOnly: true, maxLength: 10, rules: [{ required: true }] },
+  { name: 'name', label: 'Name', maxLength: 100, rules: [{ required: true }] },
+  { name: 'phone', label: 'Phone', maxLength: 20 },
+  { name: 'email', label: 'Email', maxLength: 100 },
+  { name: 'address', label: 'Address', maxLength: 200 },
+  { name: 'password', label: 'Initial password', createOnly: true, maxLength: 100, rules: [{ required: true }, { min: 6 }] }
 ]
 
 export default function MembersPage() {
@@ -2659,22 +2733,30 @@ export default function MembersPage() {
   const [form] = Form.useForm()
 
   async function toggleStatus(record, reload) {
-    if (record.status === 'ACTIVE') {
-      await deactivateMember(record.id)
-      message.success('Member deactivated')
-    } else {
-      await activateMember(record.id)
-      message.success('Member activated')
+    try {
+      if (record.status === 'ACTIVE') {
+        await deactivateMember(record.id)
+        message.success('Member deactivated')
+      } else {
+        await activateMember(record.id)
+        message.success('Member activated')
+      }
+      reload()
+    } catch (error) {
+      message.error(error.message)
     }
-    reload()
   }
 
   async function submitReset() {
-    const values = await form.validateFields()
-    await resetMemberPassword(resetTarget.id, values)
-    message.success('Password reset')
-    setResetTarget(null)
-    form.resetFields()
+    try {
+      const values = await form.validateFields()
+      await resetMemberPassword(resetTarget.id, values)
+      message.success('Password reset')
+      setResetTarget(null)
+      form.resetFields()
+    } catch (error) {
+      if (error?.message) message.error(error.message)
+    }
   }
 
   return (
@@ -2689,7 +2771,7 @@ export default function MembersPage() {
         updateApi={updateMember}
         extraActions={(record, reload) => (
           <Space size="small">
-            <Button size="small" onClick={() => toggleStatus(record, reload)}>
+            <Button size="small" disabled={record.id === getUser()?.id} onClick={() => toggleStatus(record, reload)}>
               {record.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
             </Button>
             <Button size="small" onClick={() => setResetTarget(record)}>Reset password</Button>
@@ -2701,7 +2783,7 @@ export default function MembersPage() {
         open={Boolean(resetTarget)}
         okText="Reset"
         onOk={submitReset}
-        onCancel={() => setResetTarget(null)}
+        onCancel={() => { setResetTarget(null); form.resetFields() }}
         destroyOnHidden
       >
         <Form form={form} layout="vertical">
@@ -3098,13 +3180,13 @@ const columns = [
 ]
 
 const formFields = [
-  { name: 'name', label: 'Name', rules: [{ required: true }] },
+  { name: 'name', label: 'Name', maxLength: 100, rules: [{ required: true }] },
   {
     name: 'unitType', label: 'Sold as', type: 'select', rules: [{ required: true }],
     options: [{ value: 'PER_UNIT', label: 'Per unit (each)' }, { value: 'PER_KG', label: 'Per kilogram' }]
   },
   { name: 'price', label: 'Price (AUD)', type: 'number', precision: 2, rules: [{ required: true }] },
-  { name: 'bay', label: 'Bay (e.g. B1, VEG)' }
+  { name: 'bay', label: 'Bay (e.g. B1, VEG)', maxLength: 10 }
 ]
 
 export default function ProductsPage() {
