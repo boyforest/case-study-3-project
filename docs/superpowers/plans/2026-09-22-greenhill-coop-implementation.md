@@ -45,7 +45,7 @@ cd frontend && npm install && npm run build
 
 **约定:**
 - 所有金额 `BigDecimal`,行金额 2 位 `HALF_UP`;不做 10 分凑整。
-- 业务失败返回 HTTP 200 + `Result.code=400/404/409`;未登录 HTTP 401;越权 HTTP 403。
+- 业务失败返回 HTTP 200 + `Result.code=400/404/409`;未登录 HTTP 401;越权 HTTP 403;系统异常 HTTP 500;未知路径 HTTP 404。
 - 前端无自动化测试;每完成一个前端页面,执行 `npm run build` 并确认产物更新;视觉验收由用户在浏览器完成。
 - 计划中所有相对路径均相对仓库根 `~/greenhill-coop`。
 
@@ -930,7 +930,7 @@ class CoopApplicationTests {
 ./mvnw test
 ```
 
-Expected: `BUILD SUCCESS`,1 个测试通过。
+Expected: `BUILD SUCCESS`,3 个测试通过(上下文/建表、实体往返、未知路径 404)。
 
 - [ ] **Step 14: 提交**
 
