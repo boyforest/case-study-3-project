@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage'
 import MembersPage from './pages/admin/MembersPage'
 import ProductsPage from './pages/admin/ProductsPage'
 import RoundsPage from './pages/admin/RoundsPage'
+import ShopPage from './pages/ShopPage'
 import { getUser } from './utils/auth'
 
 function RequireAuth({ roles, children }) {
@@ -23,7 +24,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-          <Route path="/shop" element={<div>Shop page (story 06)</div>} />
+          <Route path="/shop" element={<ShopPage />} />
           <Route path="/my-order" element={<div>My orders (story 08)</div>} />
           <Route path="/admin/members" element={<RequireAuth roles={['COORDINATOR']}><MembersPage /></RequireAuth>} />
           <Route path="/admin/products" element={<RequireAuth roles={['COORDINATOR']}><ProductsPage /></RequireAuth>} />
