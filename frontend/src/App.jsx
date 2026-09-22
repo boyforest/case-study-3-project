@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import AppLayout from './layouts/AppLayout'
 import LoginPage from './pages/LoginPage'
+import MembersPage from './pages/admin/MembersPage'
 import { getUser } from './utils/auth'
 
 function RequireAuth({ roles, children }) {
@@ -22,7 +23,7 @@ export default function App() {
         <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
           <Route path="/shop" element={<div>Shop page (story 06)</div>} />
           <Route path="/my-order" element={<div>My orders (story 08)</div>} />
-          <Route path="/admin/members" element={<RequireAuth roles={['COORDINATOR']}><div>Members (story 03)</div></RequireAuth>} />
+          <Route path="/admin/members" element={<RequireAuth roles={['COORDINATOR']}><MembersPage /></RequireAuth>} />
           <Route path="/admin/products" element={<RequireAuth roles={['COORDINATOR']}><div>Products (story 04)</div></RequireAuth>} />
           <Route path="/admin/rounds" element={<RequireAuth roles={['COORDINATOR']}><div>Rounds (story 05)</div></RequireAuth>} />
           <Route path="/admin/orders" element={<RequireAuth roles={['COORDINATOR']}><div>Round orders (story 09)</div></RequireAuth>} />
