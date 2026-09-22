@@ -45,7 +45,7 @@ cd frontend && npm install && npm run build
 
 **约定:**
 - 所有金额 `BigDecimal`,行金额 2 位 `HALF_UP`;不做 10 分凑整。
-- 业务失败返回 HTTP 200 + `Result.code=400/404/409`;未登录 HTTP 401;越权 HTTP 403。
+- 业务失败返回 HTTP 200 + `Result.code=400/404/409`;未登录 HTTP 401;越权 HTTP 403;系统异常 HTTP 500;未知路径 HTTP 404。
 - 前端无自动化测试;每完成一个前端页面,执行 `npm run build` 并确认产物更新;视觉验收由用户在浏览器完成。
 - 计划中所有相对路径均相对仓库根 `~/greenhill-coop`。
 
@@ -930,7 +930,7 @@ class CoopApplicationTests {
 ./mvnw test
 ```
 
-Expected: `BUILD SUCCESS`,1 个测试通过。
+Expected: `BUILD SUCCESS`,3 个测试通过(上下文/建表、实体往返、未知路径 404)。
 
 - [ ] **Step 14: 提交**
 
@@ -949,7 +949,7 @@ git commit -m "feat(story-01): project skeleton, common result/exception layer, 
 - Create: `src/main/java/com/greenhill/coop/dto/{LoginRequest,LoginResponse,MemberView}.java`
 - Create: `src/main/java/com/greenhill/coop/service/AuthService.java`
 - Create: `src/main/java/com/greenhill/coop/controller/AuthController.java`
-- Create: `src/test/java/com/greenhill/coop/ApiTestBase.java`, `src/test/java/com/greenhill/coop/AuthApiTest.java`
+- Create: `src/test/java/com/greenhill/coop/ApiTestBase.java`, `src/test/java/com/greenhill/coop/AuthApiTest.java`, `src/test/java/com/greenhill/coop/TestCoordinatorController.java`
 - Create: `frontend/{package.json,vite.config.js,index.html}` 与 `frontend/src/**`(见 Step 10-14)
 
 - [ ] **Step 1: 建分支**
@@ -1029,6 +1029,36 @@ class AuthApiTest extends ApiTestBase {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.memberNo").value("M-094"));
     }
+
+    @Test
+    void coordinatorEndpointRejectsMembersAndClearsContext() throws Exception {
+        mockMvc.perform(get("/api/test/coordinator-only")
+                .header("Authorization", "Bearer " + tokenFor("M-094", "coop1234")))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value(403));
+
+        org.assertj.core.api.Assertions.assertThat(com.greenhill.coop.auth.UserContext.get()).isNull();
+    }
+}
+```
+
+`TestCoordinatorController.java`:
+
+```java
+package com.greenhill.coop;
+
+import com.greenhill.coop.auth.RequireCoordinator;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequireCoordinator
+public class TestCoordinatorController {
+
+    @GetMapping("/api/test/coordinator-only")
+    public String coordinatorOnly() {
+        return "ok";
+    }
 }
 ```
 
@@ -1037,6 +1067,7 @@ class AuthApiTest extends ApiTestBase {
 ```java
 package com.greenhill.coop;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.greenhill.coop.common.enums.MemberRole;
 import com.greenhill.coop.common.enums.MemberStatus;
@@ -1120,8 +1151,13 @@ public abstract class ApiTestBase {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("memberNo", memberNo, "password", password))))
             .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString())
-            .path("data").path("token").asText();
+        String responseBody = result.getResponse().getContentAsString();
+        JsonNode root = objectMapper.readTree(responseBody);
+        String token = root.path("data").path("token").asText();
+        if (root.path("code").asInt() != 200 || token.isBlank()) {
+            throw new IllegalStateException("Login failed for " + memberNo + ": " + responseBody);
+        }
+        return token;
     }
 }
 ```
@@ -1260,6 +1296,7 @@ public @interface CurrentUser {
 ```java
 package com.greenhill.coop.auth;
 
+import com.greenhill.coop.common.BizException;
 import org.springframework.core.MethodParameter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.support.WebDataBinderFactory;
@@ -1279,7 +1316,11 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
     @Override
     public Object resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
                                   NativeWebRequest webRequest, WebDataBinderFactory binderFactory) {
-        return UserContext.get();
+        MemberContext context = UserContext.get();
+        if (context == null) {
+            throw BizException.unauthorized("Not logged in");
+        }
+        return context;
     }
 }
 ```
@@ -1330,13 +1371,12 @@ public class JwtInterceptor implements HandlerInterceptor {
         if (member.getStatus() != MemberStatus.ACTIVE) {
             throw BizException.unauthorized("Account is inactive");
         }
-        UserContext.set(new MemberContext(member.getId(), member.getMemberNo(), member.getName(), member.getRole()));
-
         boolean needsCoordinator = handlerMethod.hasMethodAnnotation(RequireCoordinator.class)
             || handlerMethod.getBeanType().isAnnotationPresent(RequireCoordinator.class);
         if (needsCoordinator && member.getRole() != MemberRole.COORDINATOR) {
             throw BizException.forbidden("Coordinator permission required");
         }
+        UserContext.set(new MemberContext(member.getId(), member.getMemberNo(), member.getName(), member.getRole()));
         return true;
     }
 
@@ -1900,12 +1940,12 @@ body {
 package com.greenhill.coop.config;
 
 import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 
 @Controller
 public class SpaForwardController {
 
-    @RequestMapping(value = {"/", "/login", "/shop", "/my-order", "/admin/members", "/admin/products",
+    @GetMapping(value = {"/", "/login", "/shop", "/my-order", "/admin/members", "/admin/products",
         "/admin/rounds", "/admin/orders", "/admin/totals"})
     public String index() {
         return "forward:/index.html";
