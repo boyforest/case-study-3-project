@@ -5,9 +5,12 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.greenhill.coop.common.BizException;
 import com.greenhill.coop.common.PageResult;
 import com.greenhill.coop.common.enums.ProductStatus;
+import com.greenhill.coop.dto.AvailableProductsView;
 import com.greenhill.coop.dto.ProductRequest;
 import com.greenhill.coop.dto.ProductView;
+import com.greenhill.coop.dto.RoundView;
 import com.greenhill.coop.entity.Product;
+import com.greenhill.coop.entity.Round;
 import com.greenhill.coop.mapper.ProductMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,6 +23,7 @@ import java.util.List;
 public class ProductService {
 
     private final ProductMapper productMapper;
+    private final RoundService roundService;
 
     public PageResult<ProductView> page(String keyword, ProductStatus status, long page, long size) {
         LambdaQueryWrapper<Product> qw = new LambdaQueryWrapper<>();
@@ -55,6 +59,18 @@ public class ProductService {
         product.setStatus(ProductStatus.WITHDRAWN);
         productMapper.updateById(product);
         return ProductView.from(product);
+    }
+
+    public AvailableProductsView available() {
+        Round openRound = roundService.currentOpen();
+        if (openRound == null) {
+            return new AvailableProductsView(null, List.of());
+        }
+        List<ProductView> products = productMapper.selectList(new LambdaQueryWrapper<Product>()
+                .eq(Product::getStatus, ProductStatus.ACTIVE)
+                .orderByAsc(Product::getName))
+            .stream().map(ProductView::from).toList();
+        return new AvailableProductsView(RoundView.from(openRound), products);
     }
 
     private void apply(Product product, ProductRequest request) {
