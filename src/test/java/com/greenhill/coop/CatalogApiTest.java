@@ -23,6 +23,7 @@ class CatalogApiTest extends ApiTestBase {
 
     @Test
     void withoutOpenRoundReturnsNullRoundAndEmptyList() throws Exception {
+        createRound(33, RoundStatus.PACKED);
         createProduct("Rolled oats", UnitType.PER_KG, "3.40", "B1");
         mockMvc.perform(get("/api/products/available").header("Authorization", "Bearer " + memberToken))
             .andExpect(status().isOk())
@@ -44,8 +45,10 @@ class CatalogApiTest extends ApiTestBase {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.round.roundNo").value(34))
             .andExpect(jsonPath("$.data.products.length()").value(2))
-            .andExpect(jsonPath("$.data.products[0].unitType").isNotEmpty())
-            .andExpect(jsonPath("$.data.products[0].price").isNotEmpty());
+            .andExpect(jsonPath("$.data.products[0].name").value("Rolled oats, organic"))
+            .andExpect(jsonPath("$.data.products[0].unitType").value("PER_KG"))
+            .andExpect(jsonPath("$.data.products[0].price").value(3.40))
+            .andExpect(jsonPath("$.data.products[1].name").value("Tahini, 375g jar"));
     }
 
     @Test

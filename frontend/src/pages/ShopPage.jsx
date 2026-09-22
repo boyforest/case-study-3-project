@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Card, Space, Table, Tag, Typography, message } from 'antd'
+import { Alert, Card, Space, Spin, Table, Tag, Typography, message } from 'antd'
 import { availableProducts } from '../api/product'
 
 const unitTypeLabels = { PER_UNIT: 'each', PER_KG: 'per kg' }
@@ -16,7 +16,11 @@ export default function ShopPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  if (!loading && data && !data.round) {
+  if (!data) {
+    return <Spin style={{ display: 'block', marginTop: 80 }} />
+  }
+
+  if (!data.round) {
     return (
       <Alert
         type="info"
