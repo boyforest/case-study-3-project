@@ -137,4 +137,34 @@ class ProductApiTest extends ApiTestBase {
                     """))
             .andExpect(jsonPath("$.code").value(400));
     }
+
+    @Test
+    void overLengthNameOrBayIsRejected() throws Exception {
+        mockMvc.perform(post("/api/products")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"%s","unitType":"PER_UNIT","price":1.00}
+                    """.formatted("x".repeat(101))))
+            .andExpect(jsonPath("$.code").value(400));
+
+        mockMvc.perform(post("/api/products")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"Valid name","unitType":"PER_UNIT","price":1.00,"bay":"%s"}
+                    """.formatted("B".repeat(11))))
+            .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    void threeDecimalPriceIsRejected() throws Exception {
+        mockMvc.perform(post("/api/products")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"Bad price","unitType":"PER_KG","price":3.456}
+                    """))
+            .andExpect(jsonPath("$.code").value(400));
+    }
 }
