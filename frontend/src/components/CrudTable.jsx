@@ -63,9 +63,9 @@ export default function CrudTable({
   }
 
   async function save() {
-    const values = fromFormValues(await editForm.validateFields(), formFields)
     setSaving(true)
     try {
+      const values = fromFormValues(await editForm.validateFields(), formFields)
       if (editing?.[rowKey]) {
         await updateApi(editing[rowKey], clean(values))
         message.success('Updated')
@@ -76,7 +76,7 @@ export default function CrudTable({
       setEditing(null)
       reload()
     } catch (error) {
-      message.error(error.message)
+      if (error?.message) message.error(error.message)
     } finally {
       setSaving(false)
     }
@@ -86,7 +86,15 @@ export default function CrudTable({
     modal.confirm({
       title: `Delete ${record[rowKey]}?`,
       okText: 'Delete', okButtonProps: { danger: true }, cancelText: 'Cancel',
-      onOk: async () => { await deleteApi(record[rowKey]); message.success('Deleted'); reload() }
+      onOk: async () => {
+        try {
+          await deleteApi(record[rowKey])
+          message.success('Deleted')
+          reload()
+        } catch (error) {
+          message.error(error.message)
+        }
+      }
     })
   }
 
@@ -149,7 +157,7 @@ function FieldControl({ field, filter }) {
   if (field.type === 'number') {
     return <InputNumber min={0} precision={field.precision} placeholder={field.placeholder} style={{ minWidth: 160 }} />
   }
-  return <Input placeholder={field.placeholder} style={{ minWidth: 180 }} />
+  return <Input maxLength={field.maxLength} placeholder={field.placeholder} style={{ minWidth: 180 }} />
 }
 
 function clean(object) {

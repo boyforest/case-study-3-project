@@ -1,6 +1,7 @@
 package com.greenhill.coop.common;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -48,6 +49,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(Result.error(BizCode.METHOD_NOT_ALLOWED.getCode(), "Method not allowed"));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public Result<Void> handleIntegrity(DataIntegrityViolationException e) {
+        log.warn("Data integrity violation", e);
+        return Result.error(BizCode.CONFLICT.getCode(), "This change conflicts with existing data");
     }
 
     @ExceptionHandler(Exception.class)

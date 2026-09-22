@@ -154,4 +154,53 @@ class MemberApiTest extends ApiTestBase {
             .andExpect(jsonPath("$.data.total").value(1))
             .andExpect(jsonPath("$.data.records[0].memberNo").value("M-094"));
     }
+
+    @Test
+    void keywordAndStatusFilterCombine() throws Exception {
+        createMember("M-050", "Jan Active", MemberRole.MEMBER, "coop1234");
+        Member inactive = createMember("M-051", "Jan Inactive", MemberRole.MEMBER, "coop1234");
+        inactive.setStatus(MemberStatus.INACTIVE);
+        memberMapper.updateById(inactive);
+
+        mockMvc.perform(get("/api/members?keyword=Jan&status=ACTIVE")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.total").value(1))
+            .andExpect(jsonPath("$.data.records[0].memberNo").value("M-050"));
+    }
+
+    @Test
+    void updateMissingMemberReturns404() throws Exception {
+        mockMvc.perform(put("/api/members/999999")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"Nobody\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    void resetPasswordTooShortIsRejected() throws Exception {
+        Member ky = memberMapper.selectOne(
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Member>()
+                .eq(Member::getMemberNo, "M-094"));
+        mockMvc.perform(post("/api/members/" + ky.getId() + "/reset-password")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"password\":\"123\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    void overLengthMemberNumberIsRejected() throws Exception {
+        mockMvc.perform(post("/api/members")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"memberNo":"M-123456789","name":"Too Long","password":"coop1234"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(400));
+    }
 }

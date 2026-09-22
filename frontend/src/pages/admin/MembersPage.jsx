@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { App, Button, Form, Input, Modal, Space, Tag } from 'antd'
 import CrudTable from '../../components/CrudTable'
 import { activateMember, createMember, deactivateMember, listMembers, resetMemberPassword, updateMember } from '../../api/member'
+import { getUser } from '../../utils/auth'
 
 const filters = [
   { name: 'keyword', label: 'Keyword', placeholder: 'Name or member no.' },
@@ -24,12 +25,12 @@ const columns = [
 ]
 
 const formFields = [
-  { name: 'memberNo', label: 'Member number', createOnly: true, rules: [{ required: true }] },
-  { name: 'name', label: 'Name', rules: [{ required: true }] },
-  { name: 'phone', label: 'Phone' },
-  { name: 'email', label: 'Email' },
-  { name: 'address', label: 'Address' },
-  { name: 'password', label: 'Initial password', createOnly: true, rules: [{ required: true }, { min: 6 }] }
+  { name: 'memberNo', label: 'Member number', createOnly: true, maxLength: 10, rules: [{ required: true }] },
+  { name: 'name', label: 'Name', maxLength: 100, rules: [{ required: true }] },
+  { name: 'phone', label: 'Phone', maxLength: 20 },
+  { name: 'email', label: 'Email', maxLength: 100 },
+  { name: 'address', label: 'Address', maxLength: 200 },
+  { name: 'password', label: 'Initial password', createOnly: true, maxLength: 100, rules: [{ required: true }, { min: 6 }] }
 ]
 
 export default function MembersPage() {
@@ -38,22 +39,30 @@ export default function MembersPage() {
   const [form] = Form.useForm()
 
   async function toggleStatus(record, reload) {
-    if (record.status === 'ACTIVE') {
-      await deactivateMember(record.id)
-      message.success('Member deactivated')
-    } else {
-      await activateMember(record.id)
-      message.success('Member activated')
+    try {
+      if (record.status === 'ACTIVE') {
+        await deactivateMember(record.id)
+        message.success('Member deactivated')
+      } else {
+        await activateMember(record.id)
+        message.success('Member activated')
+      }
+      reload()
+    } catch (error) {
+      message.error(error.message)
     }
-    reload()
   }
 
   async function submitReset() {
-    const values = await form.validateFields()
-    await resetMemberPassword(resetTarget.id, values)
-    message.success('Password reset')
-    setResetTarget(null)
-    form.resetFields()
+    try {
+      const values = await form.validateFields()
+      await resetMemberPassword(resetTarget.id, values)
+      message.success('Password reset')
+      setResetTarget(null)
+      form.resetFields()
+    } catch (error) {
+      if (error?.message) message.error(error.message)
+    }
   }
 
   return (
@@ -68,7 +77,7 @@ export default function MembersPage() {
         updateApi={updateMember}
         extraActions={(record, reload) => (
           <Space size="small">
-            <Button size="small" onClick={() => toggleStatus(record, reload)}>
+            <Button size="small" disabled={record.id === getUser()?.id} onClick={() => toggleStatus(record, reload)}>
               {record.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
             </Button>
             <Button size="small" onClick={() => setResetTarget(record)}>Reset password</Button>
@@ -80,7 +89,7 @@ export default function MembersPage() {
         open={Boolean(resetTarget)}
         okText="Reset"
         onOk={submitReset}
-        onCancel={() => setResetTarget(null)}
+        onCancel={() => { setResetTarget(null); form.resetFields() }}
         destroyOnHidden
       >
         <Form form={form} layout="vertical">
