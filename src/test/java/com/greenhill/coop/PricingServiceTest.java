@@ -16,12 +16,13 @@ class PricingServiceTest {
 
     private final PricingService pricingService = new PricingService();
 
-    private OrderLine line(String quantity, String unitPrice) {
+    private OrderLine line(UnitType unitType, String quantity, String unitPrice) {
         OrderLine line = new OrderLine();
-        line.setQuantity(new BigDecimal(quantity));
-        line.setUnitPrice(new BigDecimal(unitPrice));
-        line.setLineTotal(new BigDecimal(quantity).multiply(new BigDecimal(unitPrice))
-            .setScale(2, java.math.RoundingMode.HALF_UP));
+        BigDecimal qty = new BigDecimal(quantity);
+        BigDecimal price = new BigDecimal(unitPrice);
+        line.setQuantity(qty);
+        line.setUnitPrice(price);
+        line.setLineTotal(pricingService.lineTotal(unitType, qty, price));
         return line;
     }
 
@@ -56,6 +57,24 @@ class PricingServiceTest {
     }
 
     @Test
+    void perKgAcceptsTrailingZeroDecimals() {
+        assertThat(pricingService.lineTotal(UnitType.PER_KG, new BigDecimal("1.5000"), new BigDecimal("3.40")))
+            .isEqualByComparingTo("5.10");
+    }
+
+    @Test
+    void perKgAcceptsExactlyThreeDecimals() {
+        assertThat(pricingService.lineTotal(UnitType.PER_KG, new BigDecimal("1.234"), new BigDecimal("3.40")))
+            .isEqualByComparingTo("4.20");
+    }
+
+    @Test
+    void perUnitAcceptsTrailingZeroDecimals() {
+        assertThat(pricingService.lineTotal(UnitType.PER_UNIT, new BigDecimal("2.0"), new BigDecimal("7.50")))
+            .isEqualByComparingTo("15.00");
+    }
+
+    @Test
     void perUnitRejectsFractionalQuantity() {
         assertThatThrownBy(() -> pricingService.lineTotal(UnitType.PER_UNIT, new BigDecimal("1.5"), new BigDecimal("9.80")))
             .isInstanceOf(BizException.class)
@@ -80,13 +99,13 @@ class PricingServiceTest {
     @Test
     void kyTranRound33OrderTotalsTo54Dollars85() {
         List<OrderLine> lines = List.of(
-            line("1.5", "3.40"),
-            line("2", "4.10"),
-            line("1", "4.85"),
-            line("0.25", "32.00"),
-            line("1", "9.80"),
-            line("2", "7.50"),
-            line("1.5", "2.60")
+            line(UnitType.PER_KG, "1.5", "3.40"),
+            line(UnitType.PER_KG, "2", "4.10"),
+            line(UnitType.PER_KG, "1", "4.85"),
+            line(UnitType.PER_KG, "0.25", "32.00"),
+            line(UnitType.PER_UNIT, "1", "9.80"),
+            line(UnitType.PER_UNIT, "2", "7.50"),
+            line(UnitType.PER_KG, "1.5", "2.60")
         );
         assertThat(pricingService.orderTotal(lines)).isEqualByComparingTo("54.85");
     }

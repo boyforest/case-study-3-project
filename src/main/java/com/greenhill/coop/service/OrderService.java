@@ -24,7 +24,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -136,16 +135,19 @@ public class OrderService {
                 orders.stream().map(Order::getMemberId).distinct().toList())
             .stream().collect(Collectors.toMap(Member::getId, Function.identity()));
 
+        List<OrderLine> allLines = orderLineMapper.selectList(new LambdaQueryWrapper<OrderLine>()
+            .in(OrderLine::getOrderId, orders.stream().map(Order::getId).toList())
+            .orderByAsc(OrderLine::getId));
+        Map<Long, List<OrderLine>> linesByOrder = allLines.stream()
+            .collect(Collectors.groupingBy(OrderLine::getOrderId));
+        Map<Long, Product> products = allLines.isEmpty() ? Map.of()
+            : productMapper.selectBatchIds(allLines.stream().map(OrderLine::getProductId).distinct().toList())
+                .stream().collect(Collectors.toMap(Product::getId, Function.identity()));
+
         List<OrderView> views = new ArrayList<>();
         for (Order order : orders) {
-            List<OrderLine> lines = orderLineMapper.selectList(new LambdaQueryWrapper<OrderLine>()
-                .eq(OrderLine::getOrderId, order.getId())
-                .orderByAsc(OrderLine::getId));
-            Map<Long, Product> products = lines.isEmpty() ? Map.of()
-                : productMapper.selectBatchIds(lines.stream().map(OrderLine::getProductId).distinct().toList())
-                    .stream().collect(Collectors.toMap(Product::getId, Function.identity()));
-            BigDecimal total = lines.stream().map(OrderLine::getLineTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
+            List<OrderLine> lines = linesByOrder.getOrDefault(order.getId(), List.of());
+            BigDecimal total = pricingService.orderTotal(lines);
             List<OrderLineView> lineViews = lines.stream()
                 .map(l -> new OrderLineView(l.getId(), l.getProductId(),
                     products.containsKey(l.getProductId()) ? products.get(l.getProductId()).getName() : "(removed)",

@@ -19,7 +19,7 @@ public class PricingService {
         if (unitType == UnitType.PER_UNIT && quantity.stripTrailingZeros().scale() > 0) {
             throw BizException.badRequest("This product is sold by the unit; quantity must be a whole number");
         }
-        if (unitType == UnitType.PER_KG && quantity.scale() > 3) {
+        if (unitType == UnitType.PER_KG && quantity.stripTrailingZeros().scale() > 3) {
             throw BizException.badRequest("This product is sold by weight; use at most 3 decimal places");
         }
         return quantity.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);

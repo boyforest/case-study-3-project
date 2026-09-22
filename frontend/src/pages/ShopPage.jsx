@@ -5,6 +5,12 @@ import { myOrders, placeOrder } from '../api/order'
 
 const unitTypeLabels = { PER_UNIT: 'each', PER_KG: 'per kg' }
 
+function lineTotalCents(quantity, price) {
+  const qMilli = Math.round(quantity * 1000)
+  const pCents = Math.round(price * 100)
+  return Math.round((qMilli * pCents) / 1000)
+}
+
 export default function ShopPage() {
   const [data, setData] = useState(null)
   const [quantities, setQuantities] = useState({})
@@ -24,6 +30,11 @@ export default function ShopPage() {
       setQuantities(current
         ? Object.fromEntries(current.lines.map(l => [l.productId, Number(l.quantity)]))
         : {})
+      const currentLines = current?.lines || []
+      const missing = currentLines.filter(l => !(available?.products || []).some(p => p.id === l.productId))
+      if (missing.length > 0) {
+        message.warning(`No longer available and removed from your basket: ${missing.map(l => l.productName).join(', ')}`)
+      }
     } catch (error) {
       setLoadError(error.message)
       message.error(error.message)
@@ -42,11 +53,11 @@ export default function ShopPage() {
         unitType: p.unitType,
         quantity: quantities[p.id],
         unitPrice: Number(p.price),
-        lineTotal: Number((quantities[p.id] * Number(p.price)).toFixed(2))
+        lineTotal: lineTotalCents(quantities[p.id], Number(p.price)) / 100
       }))
   }, [data, quantities])
 
-  const total = lines.reduce((sum, l) => sum + l.lineTotal, 0)
+  const total = lines.reduce((sum, l) => sum + Math.round(l.lineTotal * 100), 0) / 100
 
   async function save() {
     if (lines.length === 0) {
@@ -65,11 +76,10 @@ export default function ShopPage() {
     }
   }
 
-  if (loadError) {
-    return <Alert type="error" showIcon message="Could not load the shop" description={loadError} />
-  }
-
   if (!data) {
+    if (loadError) {
+      return <Alert type="error" showIcon message="Could not load the shop" description={loadError} />
+    }
     return <Spin style={{ display: 'block', marginTop: 80 }} />
   }
 
@@ -104,7 +114,7 @@ export default function ShopPage() {
     {
       title: 'Line total', key: 'lineTotal', width: 110,
       render: (_, record) => quantities[record.id] > 0
-        ? (quantities[record.id] * Number(record.price)).toFixed(2)
+        ? (lineTotalCents(quantities[record.id], Number(record.price)) / 100).toFixed(2)
         : '—'
     }
   ]

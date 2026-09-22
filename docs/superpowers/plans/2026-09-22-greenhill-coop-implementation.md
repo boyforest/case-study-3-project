@@ -4082,7 +4082,7 @@ git add -A && git commit -m "feat(story-06): shop page product list with no-open
 - Create: `src/main/java/com/greenhill/coop/dto/{OrderLineRequest,PlaceOrderRequest,OrderLineView,OrderView}.java`
 - Create: `src/main/java/com/greenhill/coop/service/OrderService.java`
 - Create: `src/main/java/com/greenhill/coop/controller/OrderController.java`
-- Create: `src/test/java/com/greenhill/coop/PricingServiceTest.java`, `src/test/java/com/greenhill/coop/OrderApiTest.java`
+- Create: `src/test/java/com/greenhill/coop/PricingServiceTest.java`, `src/test/java/com/greenhill/coop/OrderApiTest.java`, `src/test/java/com/greenhill/coop/OrderRollbackTest.java`
 - Create: `frontend/src/api/order.js`
 - Modify: `frontend/src/pages/ShopPage.jsx`(加数量输入、订单篮、保存)
 
@@ -4113,12 +4113,13 @@ class PricingServiceTest {
 
     private final PricingService pricingService = new PricingService();
 
-    private OrderLine line(String quantity, String unitPrice) {
+    private OrderLine line(UnitType unitType, String quantity, String unitPrice) {
         OrderLine line = new OrderLine();
-        line.setQuantity(new BigDecimal(quantity));
-        line.setUnitPrice(new BigDecimal(unitPrice));
-        line.setLineTotal(new BigDecimal(quantity).multiply(new BigDecimal(unitPrice))
-            .setScale(2, java.math.RoundingMode.HALF_UP));
+        BigDecimal qty = new BigDecimal(quantity);
+        BigDecimal price = new BigDecimal(unitPrice);
+        line.setQuantity(qty);
+        line.setUnitPrice(price);
+        line.setLineTotal(pricingService.lineTotal(unitType, qty, price));
         return line;
     }
 
@@ -4153,6 +4154,24 @@ class PricingServiceTest {
     }
 
     @Test
+    void perKgAcceptsTrailingZeroDecimals() {
+        assertThat(pricingService.lineTotal(UnitType.PER_KG, new BigDecimal("1.5000"), new BigDecimal("3.40")))
+            .isEqualByComparingTo("5.10");
+    }
+
+    @Test
+    void perKgAcceptsExactlyThreeDecimals() {
+        assertThat(pricingService.lineTotal(UnitType.PER_KG, new BigDecimal("1.234"), new BigDecimal("3.40")))
+            .isEqualByComparingTo("4.20");
+    }
+
+    @Test
+    void perUnitAcceptsTrailingZeroDecimals() {
+        assertThat(pricingService.lineTotal(UnitType.PER_UNIT, new BigDecimal("2.0"), new BigDecimal("7.50")))
+            .isEqualByComparingTo("15.00");
+    }
+
+    @Test
     void perUnitRejectsFractionalQuantity() {
         assertThatThrownBy(() -> pricingService.lineTotal(UnitType.PER_UNIT, new BigDecimal("1.5"), new BigDecimal("9.80")))
             .isInstanceOf(BizException.class)
@@ -4177,20 +4196,20 @@ class PricingServiceTest {
     @Test
     void kyTranRound33OrderTotalsTo54Dollars85() {
         List<OrderLine> lines = List.of(
-            line("1.5", "3.40"),
-            line("2", "4.10"),
-            line("1", "4.85"),
-            line("0.25", "32.00"),
-            line("1", "9.80"),
-            line("2", "7.50"),
-            line("1.5", "2.60")
+            line(UnitType.PER_KG, "1.5", "3.40"),
+            line(UnitType.PER_KG, "2", "4.10"),
+            line(UnitType.PER_KG, "1", "4.85"),
+            line(UnitType.PER_KG, "0.25", "32.00"),
+            line(UnitType.PER_UNIT, "1", "9.80"),
+            line(UnitType.PER_UNIT, "2", "7.50"),
+            line(UnitType.PER_KG, "1.5", "2.60")
         );
         assertThat(pricingService.orderTotal(lines)).isEqualByComparingTo("54.85");
     }
 }
 ```
 
-- [ ] **Step 3: 写失败测试 `OrderApiTest.java`(故事 7 部分)**
+- [ ] **Step 3: 写失败测试 `OrderApiTest.java` 与 `OrderRollbackTest.java`(故事 7 部分)**
 
 ```java
 package com.greenhill.coop;
@@ -4391,7 +4410,7 @@ public class PricingService {
         if (unitType == UnitType.PER_UNIT && quantity.stripTrailingZeros().scale() > 0) {
             throw BizException.badRequest("This product is sold by the unit; quantity must be a whole number");
         }
-        if (unitType == UnitType.PER_KG && quantity.scale() > 3) {
+        if (unitType == UnitType.PER_KG && quantity.stripTrailingZeros().scale() > 3) {
             throw BizException.badRequest("This product is sold by weight; use at most 3 decimal places");
         }
         return quantity.multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
@@ -4486,7 +4505,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -4598,16 +4616,19 @@ public class OrderService {
                 orders.stream().map(Order::getMemberId).distinct().toList())
             .stream().collect(Collectors.toMap(Member::getId, Function.identity()));
 
+        List<OrderLine> allLines = orderLineMapper.selectList(new LambdaQueryWrapper<OrderLine>()
+            .in(OrderLine::getOrderId, orders.stream().map(Order::getId).toList())
+            .orderByAsc(OrderLine::getId));
+        Map<Long, List<OrderLine>> linesByOrder = allLines.stream()
+            .collect(Collectors.groupingBy(OrderLine::getOrderId));
+        Map<Long, Product> products = allLines.isEmpty() ? Map.of()
+            : productMapper.selectBatchIds(allLines.stream().map(OrderLine::getProductId).distinct().toList())
+                .stream().collect(Collectors.toMap(Product::getId, Function.identity()));
+
         List<OrderView> views = new ArrayList<>();
         for (Order order : orders) {
-            List<OrderLine> lines = orderLineMapper.selectList(new LambdaQueryWrapper<OrderLine>()
-                .eq(OrderLine::getOrderId, order.getId())
-                .orderByAsc(OrderLine::getId));
-            Map<Long, Product> products = lines.isEmpty() ? Map.of()
-                : productMapper.selectBatchIds(lines.stream().map(OrderLine::getProductId).distinct().toList())
-                    .stream().collect(Collectors.toMap(Product::getId, Function.identity()));
-            BigDecimal total = lines.stream().map(OrderLine::getLineTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
+            List<OrderLine> lines = linesByOrder.getOrDefault(order.getId(), List.of());
+            BigDecimal total = pricingService.orderTotal(lines);
             List<OrderLineView> lineViews = lines.stream()
                 .map(l -> new OrderLineView(l.getId(), l.getProductId(),
                     products.containsKey(l.getProductId()) ? products.get(l.getProductId()).getName() : "(removed)",
@@ -4671,7 +4692,7 @@ public class OrderController {
 ./mvnw test -Dtest=PricingServiceTest,OrderApiTest
 ```
 
-Expected: `PricingServiceTest` 9 个 + `OrderApiTest` 10 个全部通过。
+Expected: `PricingServiceTest` 12 个 + `OrderApiTest` 10 个 + `OrderRollbackTest` 1 个全部通过。
 
 - [ ] **Step 10: 提交后端**
 
@@ -4715,16 +4736,24 @@ import { myOrders, placeOrder } from '../api/order'
 
 const unitTypeLabels = { PER_UNIT: 'each', PER_KG: 'per kg' }
 
+function lineTotalCents(quantity, price) {
+  const qMilli = Math.round(quantity * 1000)
+  const pCents = Math.round(price * 100)
+  return Math.round((qMilli * pCents) / 1000)
+}
+
 export default function ShopPage() {
   const [data, setData] = useState(null)
   const [quantities, setQuantities] = useState({})
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => { load() }, [])
 
   async function load() {
     setLoading(true)
+    setLoadError(null)
     try {
       const [available, orders] = await Promise.all([availableProducts(), myOrders()])
       setData(available)
@@ -4732,7 +4761,13 @@ export default function ShopPage() {
       setQuantities(current
         ? Object.fromEntries(current.lines.map(l => [l.productId, Number(l.quantity)]))
         : {})
+      const currentLines = current?.lines || []
+      const missing = currentLines.filter(l => !(available?.products || []).some(p => p.id === l.productId))
+      if (missing.length > 0) {
+        message.warning(`No longer available and removed from your basket: ${missing.map(l => l.productName).join(', ')}`)
+      }
     } catch (error) {
+      setLoadError(error.message)
       message.error(error.message)
     } finally {
       setLoading(false)
@@ -4749,11 +4784,11 @@ export default function ShopPage() {
         unitType: p.unitType,
         quantity: quantities[p.id],
         unitPrice: Number(p.price),
-        lineTotal: Number((quantities[p.id] * Number(p.price)).toFixed(2))
+        lineTotal: lineTotalCents(quantities[p.id], Number(p.price)) / 100
       }))
   }, [data, quantities])
 
-  const total = lines.reduce((sum, l) => sum + l.lineTotal, 0)
+  const total = lines.reduce((sum, l) => sum + Math.round(l.lineTotal * 100), 0) / 100
 
   async function save() {
     if (lines.length === 0) {
@@ -4773,6 +4808,9 @@ export default function ShopPage() {
   }
 
   if (!data) {
+    if (loadError) {
+      return <Alert type="error" showIcon message="Could not load the shop" description={loadError} />
+    }
     return <Spin style={{ display: 'block', marginTop: 80 }} />
   }
 
@@ -4807,7 +4845,7 @@ export default function ShopPage() {
     {
       title: 'Line total', key: 'lineTotal', width: 110,
       render: (_, record) => quantities[record.id] > 0
-        ? (quantities[record.id] * Number(record.price)).toFixed(2)
+        ? (lineTotalCents(quantities[record.id], Number(record.price)) / 100).toFixed(2)
         : '—'
     }
   ]
@@ -5008,7 +5046,7 @@ Expected: 新增的 5 个测试失败(DELETE 接口不存在)。
 ./mvnw test -Dtest=OrderApiTest,PricingServiceTest
 ```
 
-Expected: `OrderApiTest` 15 个 + `PricingServiceTest` 9 个全部通过。
+Expected: `OrderApiTest` 15 个 + `PricingServiceTest` 12 个全部通过。
 
 - [ ] **Step 7: 提交后端**
 
