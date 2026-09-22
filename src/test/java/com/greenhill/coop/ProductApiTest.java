@@ -57,9 +57,10 @@ class ProductApiTest extends ApiTestBase {
                 .header("Authorization", "Bearer " + coordinatorToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"name":"Coffee beans, whole","unitType":"PER_KG","price":34.00,"bay":"C2"}
+                    {"name":"Coffee beans, ground","unitType":"PER_KG","price":34.00,"bay":"C2"}
                     """))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.name").value("Coffee beans, ground"))
             .andExpect(jsonPath("$.data.price").value(34.00));
     }
 
@@ -77,6 +78,26 @@ class ProductApiTest extends ApiTestBase {
     }
 
     @Test
+    void updateMissingProductReturns404() throws Exception {
+        mockMvc.perform(put("/api/products/99999")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"Ghost","unitType":"PER_UNIT","price":1.00,"bay":"Z9"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    void withdrawMissingProductReturns404() throws Exception {
+        mockMvc.perform(post("/api/products/99999/withdraw")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
     void memberCannotManageProducts() throws Exception {
         String memberToken = tokenFor("M-094", "coop1234");
         mockMvc.perform(get("/api/products").header("Authorization", "Bearer " + memberToken))
@@ -87,6 +108,22 @@ class ProductApiTest extends ApiTestBase {
                 .content("""
                     {"name":"X","unitType":"PER_UNIT","price":1.00}
                     """))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void memberCannotUpdateOrWithdrawProducts() throws Exception {
+        Long id = createProduct("Honey", UnitType.PER_UNIT, "12.00", "A1").getId();
+        String memberToken = tokenFor("M-094", "coop1234");
+        mockMvc.perform(put("/api/products/" + id)
+                .header("Authorization", "Bearer " + memberToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"Honey","unitType":"PER_UNIT","price":13.00,"bay":"A1"}
+                    """))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/products/" + id + "/withdraw")
+                .header("Authorization", "Bearer " + memberToken))
             .andExpect(status().isForbidden());
     }
 

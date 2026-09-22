@@ -42,9 +42,13 @@ export default function ProductsPage() {
       content: 'It will no longer be orderable. Existing orders are not affected.',
       okText: 'Withdraw',
       onOk: async () => {
-        await withdrawProduct(record.id)
-        message.success('Product withdrawn')
-        reload()
+        try {
+          await withdrawProduct(record.id)
+          message.success('Product withdrawn')
+          reload()
+        } catch (error) {
+          message.error(error.message)
+        }
       }
     })
   }

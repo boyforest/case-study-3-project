@@ -2894,9 +2894,10 @@ class ProductApiTest extends ApiTestBase {
                 .header("Authorization", "Bearer " + coordinatorToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"name":"Coffee beans, whole","unitType":"PER_KG","price":34.00,"bay":"C2"}
+                    {"name":"Coffee beans, ground","unitType":"PER_KG","price":34.00,"bay":"C2"}
                     """))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.name").value("Coffee beans, ground"))
             .andExpect(jsonPath("$.data.price").value(34.00));
     }
 
@@ -2914,6 +2915,26 @@ class ProductApiTest extends ApiTestBase {
     }
 
     @Test
+    void updateMissingProductReturns404() throws Exception {
+        mockMvc.perform(put("/api/products/99999")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"Ghost","unitType":"PER_UNIT","price":1.00,"bay":"Z9"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
+    void withdrawMissingProductReturns404() throws Exception {
+        mockMvc.perform(post("/api/products/99999/withdraw")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
     void memberCannotManageProducts() throws Exception {
         String memberToken = tokenFor("M-094", "coop1234");
         mockMvc.perform(get("/api/products").header("Authorization", "Bearer " + memberToken))
@@ -2924,6 +2945,22 @@ class ProductApiTest extends ApiTestBase {
                 .content("""
                     {"name":"X","unitType":"PER_UNIT","price":1.00}
                     """))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void memberCannotUpdateOrWithdrawProducts() throws Exception {
+        Long id = createProduct("Honey", UnitType.PER_UNIT, "12.00", "A1").getId();
+        String memberToken = tokenFor("M-094", "coop1234");
+        mockMvc.perform(put("/api/products/" + id)
+                .header("Authorization", "Bearer " + memberToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"name":"Honey","unitType":"PER_UNIT","price":13.00,"bay":"A1"}
+                    """))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/products/" + id + "/withdraw")
+                .header("Authorization", "Bearer " + memberToken))
             .andExpect(status().isForbidden());
     }
 
@@ -2955,13 +2992,16 @@ package com.greenhill.coop.dto;
 
 import com.greenhill.coop.common.enums.UnitType;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
-public record ProductRequest(@NotBlank String name, @NotNull UnitType unitType,
-                             @NotNull @DecimalMin(value = "0.01") BigDecimal price, String bay) {
+public record ProductRequest(@NotBlank @Size(max = 100) String name, @NotNull UnitType unitType,
+                             @NotNull @DecimalMin(value = "0.01") @Digits(integer = 8, fraction = 2) BigDecimal price,
+                             @Size(max = 10) String bay) {
 }
 ```
 
@@ -3119,7 +3159,7 @@ public class ProductController {
 ./mvnw test -Dtest=ProductApiTest
 ```
 
-Expected: 5 个测试通过。
+Expected: 8 个测试通过。
 
 - [ ] **Step 6: 提交后端**
 
@@ -3198,9 +3238,13 @@ export default function ProductsPage() {
       content: 'It will no longer be orderable. Existing orders are not affected.',
       okText: 'Withdraw',
       onOk: async () => {
-        await withdrawProduct(record.id)
-        message.success('Product withdrawn')
-        reload()
+        try {
+          await withdrawProduct(record.id)
+          message.success('Product withdrawn')
+          reload()
+        } catch (error) {
+          message.error(error.message)
+        }
       }
     })
   }
@@ -6179,6 +6223,8 @@ required to run the application.
    or prices per round, that is a new backlog item.
 9. If the co-op changes how it buys (for example prices negotiated per round rather than a
    catalogue price), the stored-price-snapshot assumption would need revisiting.
+10. Withdrawing a product is one-way; there is no reactivate endpoint (a mistaken withdrawal
+    needs a new product record).
 
 ## 5. Credentials, configuration and environment
 
