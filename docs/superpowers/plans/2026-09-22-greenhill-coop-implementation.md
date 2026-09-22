@@ -3371,6 +3371,23 @@ class RoundApiTest extends ApiTestBase {
     }
 
     @Test
+    void invalidRoundNumberOrMissingDatesAreRejected() throws Exception {
+        mockMvc.perform(post("/api/rounds")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"roundNo":0,"ordersOpenAt":"2026-09-25T09:00:00","ordersCloseAt":"2026-09-27T20:00:00","pickupDate":"2026-10-01"}
+                    """))
+            .andExpect(jsonPath("$.code").value(400));
+
+        mockMvc.perform(post("/api/rounds")
+                .header("Authorization", "Bearer " + coordinatorToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"roundNo\":34}"))
+            .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
     void onlyOneOpenRoundAllowed() throws Exception {
         createRound(33, RoundStatus.OPEN);
         mockMvc.perform(post("/api/rounds")
@@ -3388,6 +3405,19 @@ class RoundApiTest extends ApiTestBase {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(roundJson(33)))
             .andExpect(jsonPath("$.code").value(409));
+    }
+
+    @Test
+    void roundListIsPagedAndOrderedByRoundNumberDescending() throws Exception {
+        createRound(33, RoundStatus.PACKED);
+        createRound(34, RoundStatus.OPEN);
+
+        mockMvc.perform(get("/api/rounds")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.total").value(2))
+            .andExpect(jsonPath("$.data.records[0].roundNo").value(34))
+            .andExpect(jsonPath("$.data.records[1].roundNo").value(33));
     }
 
     @Test
@@ -3417,7 +3447,18 @@ class RoundApiTest extends ApiTestBase {
     }
 
     @Test
+    void transitionsOnUnknownRoundReturn404() throws Exception {
+        mockMvc.perform(post("/api/rounds/99999/close")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(jsonPath("$.code").value(404));
+        mockMvc.perform(post("/api/rounds/99999/pack")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(jsonPath("$.code").value(404));
+    }
+
+    @Test
     void currentReturnsOpenRoundOrNull() throws Exception {
+        createRound(33, RoundStatus.PACKED);
         String memberToken = tokenFor("M-094", "coop1234");
         mockMvc.perform(get("/api/rounds/current").header("Authorization", "Bearer " + memberToken))
             .andExpect(jsonPath("$.data", org.hamcrest.Matchers.nullValue()));
@@ -3455,11 +3496,12 @@ Expected: 404/编译失败。
 package com.greenhill.coop.dto;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-public record RoundCreateRequest(@NotNull Integer roundNo, @NotNull LocalDateTime ordersOpenAt,
+public record RoundCreateRequest(@NotNull @Positive Integer roundNo, @NotNull LocalDateTime ordersOpenAt,
                                  @NotNull LocalDateTime ordersCloseAt, @NotNull LocalDate pickupDate) {
 }
 ```
@@ -3513,7 +3555,7 @@ public class RoundService {
         return PageResult.of(views, result.getTotal(), result.getCurrent(), result.getSize());
     }
 
-    public RoundView create(RoundCreateRequest request) {
+    public synchronized RoundView create(RoundCreateRequest request) {
         if (roundMapper.selectCount(new LambdaQueryWrapper<Round>().eq(Round::getRoundNo, request.roundNo())) > 0) {
             throw BizException.conflict("Round number already exists");
         }
@@ -3540,7 +3582,9 @@ public class RoundService {
 
     public Round currentOpen() {
         return roundMapper.selectList(new LambdaQueryWrapper<Round>()
-                .eq(Round::getStatus, RoundStatus.OPEN))
+                .eq(Round::getStatus, RoundStatus.OPEN)
+                .orderByDesc(Round::getRoundNo)
+                .last("LIMIT 1"))
             .stream().findFirst().orElse(null);
     }
 
@@ -3629,7 +3673,7 @@ public class RoundController {
 ./mvnw test -Dtest=RoundApiTest
 ```
 
-Expected: 7 个测试通过。
+Expected: 10 个测试通过。
 
 - [ ] **Step 6: 提交后端**
 
@@ -6255,6 +6299,8 @@ required to run the application.
    catalogue price), the stored-price-snapshot assumption would need revisiting.
 10. Withdrawing a product is one-way; there is no reactivate endpoint (a mistaken withdrawal
     needs a new product record).
+11. Round creation is guarded by a JVM-level lock; a multi-instance deployment would need a
+    database-level constraint instead.
 
 ## 5. Credentials, configuration and environment
 

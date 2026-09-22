@@ -27,7 +27,7 @@ public class RoundService {
         return PageResult.of(views, result.getTotal(), result.getCurrent(), result.getSize());
     }
 
-    public RoundView create(RoundCreateRequest request) {
+    public synchronized RoundView create(RoundCreateRequest request) {
         if (roundMapper.selectCount(new LambdaQueryWrapper<Round>().eq(Round::getRoundNo, request.roundNo())) > 0) {
             throw BizException.conflict("Round number already exists");
         }
@@ -54,7 +54,9 @@ public class RoundService {
 
     public Round currentOpen() {
         return roundMapper.selectList(new LambdaQueryWrapper<Round>()
-                .eq(Round::getStatus, RoundStatus.OPEN))
+                .eq(Round::getStatus, RoundStatus.OPEN)
+                .orderByDesc(Round::getRoundNo)
+                .last("LIMIT 1"))
             .stream().findFirst().orElse(null);
     }
 
