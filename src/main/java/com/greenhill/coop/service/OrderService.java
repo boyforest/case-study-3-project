@@ -68,6 +68,22 @@ public class OrderService {
         return toViews(orders);
     }
 
+    @Transactional
+    public void cancelMyOrder(Long memberId) {
+        Round round = roundService.currentOpen();
+        if (round == null) {
+            throw BizException.conflict("No round is open for ordering");
+        }
+        Order order = orderMapper.selectOne(new LambdaQueryWrapper<Order>()
+            .eq(Order::getMemberId, memberId)
+            .eq(Order::getRoundId, round.getId()));
+        if (order == null || order.getStatus() != OrderStatus.ACTIVE) {
+            throw BizException.notFound("No active order for the current round");
+        }
+        order.setStatus(OrderStatus.CANCELLED);
+        orderMapper.updateById(order);
+    }
+
     public List<OrderView> roundOrders(Long roundId) {
         List<Order> orders = orderMapper.selectList(new LambdaQueryWrapper<Order>()
             .eq(Order::getRoundId, roundId)

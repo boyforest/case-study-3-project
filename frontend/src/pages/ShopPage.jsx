@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Col, InputNumber, Row, Space, Spin, Table, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Col, InputNumber, Row, Space, Spin, Table, Tag, Typography, App } from 'antd'
 import { availableProducts } from '../api/product'
-import { myOrders, placeOrder } from '../api/order'
+import { myOrders, placeOrder, cancelOrder } from '../api/order'
 
 const unitTypeLabels = { PER_UNIT: 'each', PER_KG: 'per kg' }
 
@@ -12,11 +12,13 @@ function lineTotalCents(quantity, price) {
 }
 
 export default function ShopPage() {
+  const { message, modal } = App.useApp()
   const [data, setData] = useState(null)
   const [quantities, setQuantities] = useState({})
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loadError, setLoadError] = useState(null)
+  const [hasActiveOrder, setHasActiveOrder] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -27,6 +29,7 @@ export default function ShopPage() {
       const [available, orders] = await Promise.all([availableProducts(), myOrders()])
       setData(available)
       const current = (orders || []).find(o => o.status === 'ACTIVE' && o.roundId === available?.round?.id)
+      setHasActiveOrder(Boolean(current))
       setQuantities(current
         ? Object.fromEntries(current.lines.map(l => [l.productId, Number(l.quantity)]))
         : {})
@@ -74,6 +77,24 @@ export default function ShopPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function cancel() {
+    modal.confirm({
+      title: 'Cancel your order for this round?',
+      okText: 'Cancel order',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await cancelOrder()
+          message.success('Order cancelled')
+          setQuantities({})
+          load()
+        } catch (error) {
+          message.error(error.message)
+        }
+      }
+    })
   }
 
   if (!data) {
@@ -142,7 +163,12 @@ export default function ShopPage() {
       <Col span={8}>
         <Card
           title="Your order"
-          extra={<Button type="primary" loading={saving} onClick={save}>Save order</Button>}
+          extra={(
+            <Space>
+              <Button danger disabled={!hasActiveOrder} onClick={cancel}>Cancel order</Button>
+              <Button type="primary" loading={saving} onClick={save}>Save order</Button>
+            </Space>
+          )}
         >
           <Table rowKey="productId" columns={basketColumns} dataSource={lines}
                  pagination={false} size="small" locale={{ emptyText: 'Add products on the left' }} />

@@ -8,6 +8,7 @@ import com.greenhill.coop.dto.PlaceOrderRequest;
 import com.greenhill.coop.service.OrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,5 +33,11 @@ public class OrderController {
     public Result<OrderView> placeMine(@CurrentUser MemberContext context,
                                        @Valid @RequestBody PlaceOrderRequest request) {
         return Result.success(orderService.placeMyOrder(context.id(), request));
+    }
+
+    @DeleteMapping("/mine")
+    public Result<Void> cancelMine(@CurrentUser MemberContext context) {
+        orderService.cancelMyOrder(context.id());
+        return Result.success(null);
     }
 }
