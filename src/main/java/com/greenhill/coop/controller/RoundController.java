@@ -53,4 +53,10 @@ public class RoundController {
     public Result<RoundView> pack(@PathVariable Long id) {
         return Result.success(roundService.pack(id));
     }
+
+    @GetMapping("/{id}/totals")
+    @RequireCoordinator
+    public Result<com.greenhill.coop.dto.RoundTotalsView> totals(@PathVariable Long id) {
+        return Result.success(roundService.roundTotals(id));
+    }
 }

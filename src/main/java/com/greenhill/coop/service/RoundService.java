@@ -6,12 +6,17 @@ import com.greenhill.coop.common.BizException;
 import com.greenhill.coop.common.PageResult;
 import com.greenhill.coop.common.enums.RoundStatus;
 import com.greenhill.coop.dto.RoundCreateRequest;
+import com.greenhill.coop.dto.RoundTotalRow;
+import com.greenhill.coop.dto.RoundTotalsView;
 import com.greenhill.coop.dto.RoundView;
 import com.greenhill.coop.entity.Round;
+import com.greenhill.coop.mapper.OrderLineMapper;
 import com.greenhill.coop.mapper.RoundMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 
 @Service
@@ -19,6 +24,7 @@ import java.util.List;
 public class RoundService {
 
     private final RoundMapper roundMapper;
+    private final OrderLineMapper orderLineMapper;
 
     public PageResult<RoundView> page(long page, long size) {
         Page<Round> result = roundMapper.selectPage(new Page<>(page, size),
@@ -58,6 +64,16 @@ public class RoundService {
                 .orderByDesc(Round::getRoundNo)
                 .last("LIMIT 1"))
             .stream().findFirst().orElse(null);
+    }
+
+    public RoundTotalsView roundTotals(Long roundId) {
+        Round round = find(roundId);
+        List<RoundTotalRow> rows = orderLineMapper.selectRoundTotals(roundId);
+        BigDecimal total = rows.stream()
+            .map(RoundTotalRow::getTotalAmount)
+            .reduce(BigDecimal.ZERO, BigDecimal::add)
+            .setScale(2, RoundingMode.HALF_UP);
+        return new RoundTotalsView(round.getId(), round.getRoundNo(), rows, total);
     }
 
     private RoundView transition(Long id, RoundStatus from, RoundStatus to, String errorMessage) {
