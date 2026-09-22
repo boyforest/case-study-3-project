@@ -10,6 +10,7 @@ public enum BizCode {
     FORBIDDEN(403, "No permission"),
     NOT_FOUND(404, "Not found"),
     CONFLICT(409, "Conflict"),
+    METHOD_NOT_ALLOWED(405, "Method not allowed"),
     SYSTEM_ERROR(500, "System error");
 
     private final int code;

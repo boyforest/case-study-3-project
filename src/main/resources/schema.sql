@@ -56,3 +56,5 @@ CREATE TABLE IF NOT EXISTS order_line (
     updated_at TIMESTAMP NOT NULL,
     CONSTRAINT uk_line_order_product UNIQUE (order_id, product_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_orders_round ON orders(round_id);
