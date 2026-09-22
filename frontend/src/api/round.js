@@ -23,7 +23,3 @@ export function packRound(id) {
 export function roundTotals(id) {
   return request.get(`/api/rounds/${id}/totals`)
 }
-
-export function roundOrders(id) {
-  return request.get('/api/orders', { params: { roundId: id } })
-}

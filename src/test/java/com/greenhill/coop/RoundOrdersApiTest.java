@@ -32,7 +32,8 @@ class RoundOrdersApiTest extends ApiTestBase {
         mockMvc.perform(put("/api/orders/mine")
             .header("Authorization", "Bearer " + tokenFor(memberNo, "coop1234"))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"lines\":[{\"productId\":%d,\"quantity\":%s}]}".formatted(oatsId, quantity)));
+            .content("{\"lines\":[{\"productId\":%d,\"quantity\":%s}]}".formatted(oatsId, quantity)))
+            .andExpect(status().isOk());
     }
 
     @Test
@@ -68,7 +69,40 @@ class RoundOrdersApiTest extends ApiTestBase {
 
         mockMvc.perform(get("/api/orders?roundId=" + roundId)
                 .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    @Test
+    void ordersAreScopedToTheRequestedRound() throws Exception {
+        place("M-094", "1.5");
+        createRound(35, RoundStatus.OPEN);
+        mockMvc.perform(put("/api/orders/mine")
+                .header("Authorization", "Bearer " + tokenFor("M-094", "coop1234"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"lines\":[{\"productId\":%d,\"quantity\":2}]}".formatted(oatsId)))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/orders?roundId=" + roundId)
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].roundId").value(roundId));
+    }
+
+    @Test
+    void unknownRoundReturnsEmptyArray() throws Exception {
+        mockMvc.perform(get("/api/orders?roundId=99999")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void missingRoundIdIsRejected() throws Exception {
+        mockMvc.perform(get("/api/orders")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(jsonPath("$.code").value(400));
     }
 
     @Test

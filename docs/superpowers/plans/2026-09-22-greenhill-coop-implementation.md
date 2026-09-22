@@ -509,6 +509,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -541,7 +542,8 @@ public class GlobalExceptionHandler {
                 .body(Result.error(BizCode.NOT_FOUND.getCode(), "Not found"));
     }
 
-    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
+        MissingServletRequestParameterException.class})
     public Result<Void> handleBadRequest(Exception e) {
         return Result.error(BizCode.PARAM_ERROR.getCode(), "Invalid request");
     }
@@ -3709,10 +3711,6 @@ export function packRound(id) {
 export function roundTotals(id) {
   return request.get(`/api/rounds/${id}/totals`)
 }
-
-export function roundOrders(id) {
-  return request.get('/api/orders', { params: { roundId: id } })
-}
 ```
 
 ```jsx
@@ -5272,7 +5270,8 @@ class RoundOrdersApiTest extends ApiTestBase {
         mockMvc.perform(put("/api/orders/mine")
             .header("Authorization", "Bearer " + tokenFor(memberNo, "coop1234"))
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"lines\":[{\"productId\":%d,\"quantity\":%s}]}".formatted(oatsId, quantity)));
+            .content("{\"lines\":[{\"productId\":%d,\"quantity\":%s}]}".formatted(oatsId, quantity)))
+            .andExpect(status().isOk());
     }
 
     @Test
@@ -5308,7 +5307,40 @@ class RoundOrdersApiTest extends ApiTestBase {
 
         mockMvc.perform(get("/api/orders?roundId=" + roundId)
                 .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    @Test
+    void ordersAreScopedToTheRequestedRound() throws Exception {
+        place("M-094", "1.5");
+        createRound(35, RoundStatus.OPEN);
+        mockMvc.perform(put("/api/orders/mine")
+                .header("Authorization", "Bearer " + tokenFor("M-094", "coop1234"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"lines\":[{\"productId\":%d,\"quantity\":2}]}".formatted(oatsId)))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/orders?roundId=" + roundId)
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].roundId").value(roundId));
+    }
+
+    @Test
+    void unknownRoundReturnsEmptyArray() throws Exception {
+        mockMvc.perform(get("/api/orders?roundId=99999")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void missingRoundIdIsRejected() throws Exception {
+        mockMvc.perform(get("/api/orders")
+                .header("Authorization", "Bearer " + coordinatorToken))
+            .andExpect(jsonPath("$.code").value(400));
     }
 
     @Test
@@ -5344,7 +5376,7 @@ Expected: 403/404(接口不存在或未授权)。
 ./mvnw test -Dtest=RoundOrdersApiTest
 ```
 
-Expected: 4 个测试通过。
+Expected: 7 个测试通过。
 
 - [ ] **Step 6: 提交后端**
 
@@ -5356,17 +5388,20 @@ git add -A && git commit -m "feat(story-09): coordinator round orders endpoint"
 
 ```jsx
 import { useEffect, useState } from 'react'
-import { Card, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { App, Button, Card, Select, Space, Table, Tag, Typography } from 'antd'
+import { ReloadOutlined } from '@ant-design/icons'
 import { listRounds } from '../../api/round'
 import { ordersForRound } from '../../api/order'
 
 const unitTypeLabels = { PER_UNIT: 'each', PER_KG: 'per kg' }
 
 export default function OrdersPage() {
+  const { message } = App.useApp()
   const [rounds, setRounds] = useState([])
   const [roundId, setRoundId] = useState(null)
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     listRounds({ page: 1, size: 50 })
@@ -5380,16 +5415,19 @@ export default function OrdersPage() {
 
   useEffect(() => {
     if (!roundId) return
+    let ignore = false
     setLoading(true)
+    setOrders([])
     ordersForRound(roundId)
-      .then(setOrders)
-      .catch(error => message.error(error.message))
-      .finally(() => setLoading(false))
-  }, [roundId])
+      .then(data => { if (!ignore) setOrders(data) })
+      .catch(error => { if (!ignore) message.error(error.message) })
+      .finally(() => { if (!ignore) setLoading(false) })
+    return () => { ignore = true }
+  }, [roundId, reloadKey])
 
   const orderColumns = [
     { title: 'Member', key: 'member', render: (_, r) => `${r.memberNo} — ${r.memberName}` },
-    { title: 'Status', dataIndex: 'status', render: v => <Tag color={v === 'ACTIVE' ? 'green' : 'red'}>{v}</Tag> },
+    { title: 'Status', dataIndex: 'status', render: v => <Tag color="green">{v}</Tag> },
     { title: 'Lines', key: 'lines', render: (_, r) => r.lines.length },
     { title: 'Total (AUD)', dataIndex: 'total', render: v => Number(v).toFixed(2) }
   ]
@@ -5414,10 +5452,12 @@ export default function OrdersPage() {
           </Typography.Text>
           <Select
             style={{ minWidth: 200 }}
+            placeholder="Select a round"
             value={roundId}
             onChange={setRoundId}
             options={rounds.map(r => ({ value: r.id, label: `Round ${r.roundNo} (${r.status})` }))}
           />
+          <Button icon={<ReloadOutlined />} onClick={() => setReloadKey(k => k + 1)} />
         </Space>
       )}
     >
