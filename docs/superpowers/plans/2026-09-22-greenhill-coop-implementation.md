@@ -350,6 +350,8 @@ CREATE TABLE IF NOT EXISTS order_line (
     updated_at TIMESTAMP NOT NULL,
     CONSTRAINT uk_line_order_product UNIQUE (order_id, product_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_orders_round ON orders(round_id);
 ```
 
 - [ ] **Step 5: 写 6 个枚举**
@@ -392,6 +394,7 @@ public enum BizCode {
     FORBIDDEN(403, "No permission"),
     NOT_FOUND(404, "Not found"),
     CONFLICT(409, "Conflict"),
+    METHOD_NOT_ALLOWED(405, "Method not allowed"),
     SYSTEM_ERROR(500, "System error");
 
     private final int code;
@@ -501,10 +504,14 @@ package com.greenhill.coop.common;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
 @RestControllerAdvice
@@ -527,10 +534,28 @@ public class GlobalExceptionHandler {
         return Result.error(BizCode.PARAM_ERROR.getCode(), message);
     }
 
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Result<Void>> handleNoResource(NoResourceFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.error(BizCode.NOT_FOUND.getCode(), "Not found"));
+    }
+
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    public Result<Void> handleBadRequest(Exception e) {
+        return Result.error(BizCode.PARAM_ERROR.getCode(), "Invalid request");
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Result<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Result.error(BizCode.METHOD_NOT_ALLOWED.getCode(), "Method not allowed"));
+    }
+
     @ExceptionHandler(Exception.class)
-    public Result<Void> handleOther(Exception e) {
+    public ResponseEntity<Result<Void>> handleOther(Exception e) {
         log.error("Unhandled exception", e);
-        return Result.error(BizCode.SYSTEM_ERROR.getCode(), "System error");
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Result.error(BizCode.SYSTEM_ERROR.getCode(), "System error"));
     }
 }
 ```
@@ -843,24 +868,58 @@ spring:
 ```java
 package com.greenhill.coop;
 
+import com.greenhill.coop.common.enums.MemberRole;
+import com.greenhill.coop.common.enums.MemberStatus;
+import com.greenhill.coop.entity.Member;
 import com.greenhill.coop.mapper.MemberMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Transactional
 class CoopApplicationTests {
 
     @Autowired
     private MemberMapper memberMapper;
 
+    @Autowired
+    private MockMvc mockMvc;
+
     @Test
     void contextLoadsAndSchemaIsCreated() {
         assertThat(memberMapper.selectCount(null)).isZero();
+    }
+
+    @Test
+    void entityRoundTripWithEnumsAndAutoFillTimestamps() {
+        Member member = new Member();
+        member.setMemberNo("M-900");
+        member.setName("Test Member");
+        member.setRole(MemberRole.MEMBER);
+        member.setStatus(MemberStatus.ACTIVE);
+        member.setPasswordHash("x");
+        memberMapper.insert(member);
+
+        Member loaded = memberMapper.selectById(member.getId());
+        assertThat(loaded.getRole()).isEqualTo(MemberRole.MEMBER);
+        assertThat(loaded.getStatus()).isEqualTo(MemberStatus.ACTIVE);
+        assertThat(loaded.getCreatedAt()).isNotNull();
+        assertThat(loaded.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void unknownPathReturns404() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/no-such-page"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
     }
 }
 ```
