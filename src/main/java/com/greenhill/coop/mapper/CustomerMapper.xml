@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.greenhill.coop.mapper.CustomerMapper">
+
+    <resultMap id="CustomerResultMap" type="com.greenhill.coop.entity.Customer">
+        <id column="id" property="id"/>
+        <result column="name" property="name"/>
+        <result column="phone" property="phone"/>
+        <result column="email" property="email"/>
+    </resultMap>
+
+    <select id="selectAll" resultMap="CustomerResultMap">
+        SELECT id,name,phone,email FROM customer
+    </select>
+
+    <select id="selectById" resultMap="CustomerResultMap">
+        SELECT id,name,phone,email FROM customer WHERE id = #{id}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO customer(name,phone,email) VALUES(#{name},#{phone},#{email})
+    </insert>
+
+    <update id="update">
+        UPDATE customer SET name=#{name},phone=#{phone},email=#{email} WHERE id=#{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM customer WHERE id=#{id}
+    </delete>
+
+</mapper>
